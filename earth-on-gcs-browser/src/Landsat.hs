@@ -1,6 +1,7 @@
 module Landsat where
 
-import           Control.Lens          ((&), (.~))
+import           Control.Lens          ((&), (.~), (^.))
+import           Control.Monad         (replicateM)
 import           Data.Aeson            (ToJSON, object, toJSON, (.=))
 import           Data.ByteString.Char8 (pack)
 import           Data.ByteString.Lazy  (ByteString)
@@ -8,17 +9,32 @@ import           Data.List             (concat, intersperse)
 import           Data.Maybe            (fromMaybe)
 import           Data.Semigroup        (Semigroup, (<>))
 import qualified Data.Text             as T
+import           Data.Word             (Word8)
 import           GHC.Generics
 import           Network.Wreq          (Options, Response, defaults, header,
-                                        param, postWith)
+                                        param, postWith, responseBody)
+import           System.Random         (randomIO)
+
+class Filterable a where
+  toFilter :: a -> String
 
 data SensorId =
-  LT04
-  | LT05
-  | LM04
-  | LM05
-  | LE07
-  | LC08 deriving (Eq, Show)
+  TM
+  | ETM
+  | MSS
+  | OLI deriving (Eq, Show)
+
+instance Filterable SensorId where
+  toFilter = ("'" ++ ) . (++ "'") . show
+
+data SpacecraftId =
+  LANDSAT_4
+  | LANDSAT_5
+  | LANDSAT_7
+  | LANDSAT_8 deriving (Eq, Show)
+
+instance Filterable SpacecraftId where
+  toFilter = ("'" ++ ) . (++ "'") . show
 
 data JobPost = JobPost { configuration :: JobConfiguration
                        , jobReference  :: JobReference
@@ -60,13 +76,34 @@ instance Semigroup LandsatQuery where
                                 , offset = max <$> (offset this) <*> (offset that) }
 
 withMinCloudCover :: CloudCover -> LandsatQuery
-withMinCloudCover cc = defaultLandsatQ <> LandsatQuery "" ["cloud_cover >= " ++ show cc] [] Nothing Nothing
+withMinCloudCover cc =
+  defaultLandsatQ
+  <> LandsatQuery "" ["cloud_cover >= " ++ show cc] [] Nothing Nothing
 
 withMaxCloudCover :: CloudCover -> LandsatQuery
-withMaxCloudCover cc = defaultLandsatQ <> LandsatQuery "" ["cloud_cover <= " ++ show cc] [] Nothing Nothing
+withMaxCloudCover cc =
+  defaultLandsatQ
+  <> LandsatQuery "" ["cloud_cover <= " ++ show cc] [] Nothing Nothing
 
 withSensor :: SensorId -> LandsatQuery
-withSensor sensor = defaultLandsatQ <> LandsatQuery "" ["sensor_id = " ++ show sensor] [] Nothing Nothing
+withSensor sensor =
+  defaultLandsatQ
+  <> LandsatQuery "" ["sensor_id = " ++ toFilter sensor] [] Nothing Nothing
+
+withSpacecraft :: SpacecraftId -> LandsatQuery
+withSpacecraft spacecraft =
+  defaultLandsatQ
+  <> LandsatQuery "" ["spacecraft_id = " ++ toFilter spacecraft] [] Nothing Nothing
+
+withLimit :: Int -> LandsatQuery
+withLimit limit =
+  defaultLandsatQ
+  <> LandsatQuery "" [] [] (Just limit) Nothing
+
+withOffset :: Int -> LandsatQuery
+withOffset offset =
+  defaultLandsatQ
+  <> LandsatQuery "" [] [] Nothing (Just offset)
 
 makeFilters :: LandsatQuery -> String
 makeFilters (LandsatQuery _ [] _ _ _) = ""
@@ -83,8 +120,8 @@ buildQueryString lq =
   selectF lq
   ++ makeFilters lq
   ++ makeOrderings lq
-  ++ fromMaybe "" (show <$> limit lq)
-  ++ fromMaybe "" (show <$> offset lq)
+  ++ fromMaybe "" ((" LIMIT " ++ ) . show <$> limit lq)
+  ++ fromMaybe "" ((" OFFSET " ++ ) . show <$> offset lq)
 
 instance ToJSON LandsatQuery where
   toJSON lq =
@@ -108,3 +145,19 @@ runQuery key body = postWith opts baseUrl $ toJSON body
     opts = defaults
       & header "Authorization" .~ [pack $ "Bearer " ++ key]
       & param "alt" .~ ["json"]
+
+randomInt :: IO Word8
+randomInt = randomIO
+
+randomJobId :: IO String
+randomJobId = (\nums -> concat $ show <$> nums) <$> replicateM 4 randomInt
+
+
+-- TODO: add decoder for bigquery response, see if assuming completion in req/response
+-- cycle is reasonable
+tryIt :: String -> IO ()
+tryIt s = do
+  jobId <- randomJobId
+  print jobId
+  resp <- runQuery s (makeJobPost (defaultLandsatQ <> withLimit 10) jobId)
+  print $ (resp ^. responseBody)
