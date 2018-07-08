@@ -2,13 +2,12 @@ name:                earth-on-gcs-api-server
 version:             0.1.0.0
 github:              "githubuser/earth-on-gcs-api-server"
 license:             BSD3
-author:              "Author name here"
-maintainer:          "example@example.com"
-copyright:           "2018 Author name here"
+author:              "James Santucci"
+maintainer:          "james.santucci@gmail.com"
+copyright:           "2018 James Santucci"
 
 extra-source-files:
 - README.md
-- ChangeLog.md
 
 # Metadata used when publishing your package
 # synopsis:            Short description of your package
@@ -21,9 +20,27 @@ description:         Please see the README on GitHub at <https://github.com/gith
 
 dependencies:
 - base >= 4.7 && < 5
+- aeson >= 1.2.4 && < 1.3
+- text >= 1.2.3 && < 1.2.4
+- time >= 1.8.0.2 && < 1.9 
+- servant >= 0.13.0.1 && < 0.14
+- servant-server >= 0.13.0.1 && < 0.14
+- wai >= 3.2.1 && < 3.3
+- warp >= 3.2.22 && < 3.3
 
 library:
   source-dirs: src
+  default-extensions:
+    - DataKinds
+    - TypeOperators
+    - DeriveGeneric
+    - FlexibleInstances
+    - GeneralizedNewtypeDeriving
+    - MultiParamTypeClasses
+    - OverloadedStrings
+    - RankNTypes
+    - ScopedTypeVariables
+    - TypeOperators
 
 executables:
   earth-on-gcs-api-server-exe:
