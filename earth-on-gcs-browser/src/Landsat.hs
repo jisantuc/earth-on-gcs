@@ -1,41 +1,23 @@
 module Landsat where
 
+import           BigQuery
+import           Control.Applicative   ((<|>))
 import           Control.Lens          ((&), (.~), (^.))
 import           Control.Monad         (replicateM)
-import           Data.Aeson            (ToJSON, object, toJSON, (.=))
+import           Data.Aeson            (ToJSON, decode, object, toJSON, (.=))
 import           Data.ByteString.Char8 (pack)
 import           Data.ByteString.Lazy  (ByteString)
 import           Data.List             (concat, intersperse)
 import           Data.Maybe            (fromMaybe)
 import           Data.Semigroup        (Semigroup, (<>))
 import qualified Data.Text             as T
+import           Data.Time.Format      (defaultTimeLocale, FormatTime, formatTime)
 import           Data.Word             (Word8)
 import           GHC.Generics
-import           Network.Wreq          (Options, Response, defaults, header,
-                                        param, postWith, responseBody)
+import           LandsatModel
+import           Network.Wreq          (Options, Response, defaults, getWith,
+                                        header, param, postWith, responseBody)
 import           System.Random         (randomIO)
-
-class Filterable a where
-  toFilter :: a -> String
-
-data SensorId =
-  TM
-  | ETM
-  | MSS
-  | OLI deriving (Eq, Show)
-
-instance Filterable SensorId where
-  toFilter = ("'" ++ ) . (++ "'") . show
-
-data SpacecraftId =
-  LANDSAT_4
-  | LANDSAT_5
-  | LANDSAT_7
-  | LANDSAT_8 deriving (Eq, Show)
-
-instance Filterable SpacecraftId where
-  toFilter = ("'" ++ ) . (++ "'") . show
-
 data JobPost = JobPost { configuration :: JobConfiguration
                        , jobReference  :: JobReference
                        } deriving (Eq, Show, Generic)
@@ -43,11 +25,6 @@ data JobPost = JobPost { configuration :: JobConfiguration
 data SortOrder = ASC | DESC deriving (Eq, Show)
 
 instance ToJSON JobPost
-
-data JobReference = JobReference { projectId :: String
-                                 , jobId     :: String } deriving (Eq, Show, Generic)
-
-instance ToJSON JobReference
 
 data JobConfiguration = JobConfiguration { queryObj :: LandsatQuery } deriving (Eq, Show)
 
@@ -58,52 +35,67 @@ instance ToJSON JobConfiguration where
 data LandsatQuery = LandsatQuery { selectF  :: String
                                  , filters  :: [String]
                                  , ordering :: [String]
-                                 , limit    :: Maybe Int
-                                 , offset   :: Maybe Int } deriving (Eq, Show)
+                                 , limit    :: Int
+                                 , offset   :: Int } deriving (Eq, Show)
 
 tableName :: String
 tableName = "[bigquery-public-data:cloud_storage_geo_index.landsat_index]"
 
 defaultLandsatQ :: LandsatQuery
-defaultLandsatQ = LandsatQuery ("select * from " ++ tableName) [] [] (Just 100) Nothing
+defaultLandsatQ = LandsatQuery ("select * from " ++ tableName) [] [] 100 0
 
 -- there's no identity, since the default selectF is always chosen
 instance Semigroup LandsatQuery where
   (<>) this that = LandsatQuery { selectF = selectF defaultLandsatQ
                                 , filters = filters this <> filters that
                                 , ordering = ordering this <> ordering that
-                                , limit = min <$> (limit this) <*> (limit that)
-                                , offset = max <$> (offset this) <*> (offset that) }
+                                , limit = min (limit this) (limit that)
+                                , offset = max (offset this) (offset that) }
+
+withMinDateAcquired :: FormatTime t => t -> LandsatQuery
+withMinDateAcquired formattable =
+  defaultLandsatQ
+  <> LandsatQuery "" ["date_acquired >= " ++ formatTime defaultTimeLocale "%Y-%m-%d" formattable] [] (maxBound :: Int) 0
+
+withMaxDateAcquired :: FormatTime t => t -> LandsatQuery
+withMaxDateAcquired formattable =
+  defaultLandsatQ
+  <> LandsatQuery "" ["date_acquired <= " ++ formatTime defaultTimeLocale "%Y-%m-%d" formattable] [] (maxBound :: Int) 0
 
 withMinCloudCover :: CloudCover -> LandsatQuery
 withMinCloudCover cc =
   defaultLandsatQ
-  <> LandsatQuery "" ["cloud_cover >= " ++ show cc] [] Nothing Nothing
+  <> LandsatQuery "" ["cloud_cover >= " ++ show cc] [] (maxBound :: Int) 0
 
 withMaxCloudCover :: CloudCover -> LandsatQuery
 withMaxCloudCover cc =
   defaultLandsatQ
-  <> LandsatQuery "" ["cloud_cover <= " ++ show cc] [] Nothing Nothing
+  <> LandsatQuery "" ["cloud_cover <= " ++ show cc] [] (maxBound :: Int) 0
+
+withOrdering :: String -> SortOrder -> LandsatQuery
+withOrdering fieldName direction =
+  defaultLandsatQ
+  <> LandsatQuery "" [] [fieldName ++ " " ++ show direction] (maxBound :: Int) 0
 
 withSensor :: SensorId -> LandsatQuery
 withSensor sensor =
   defaultLandsatQ
-  <> LandsatQuery "" ["sensor_id = " ++ toFilter sensor] [] Nothing Nothing
+  <> LandsatQuery "" ["sensor_id = " ++ toFilter sensor] [] (maxBound :: Int) 0
 
 withSpacecraft :: SpacecraftId -> LandsatQuery
 withSpacecraft spacecraft =
   defaultLandsatQ
-  <> LandsatQuery "" ["spacecraft_id = " ++ toFilter spacecraft] [] Nothing Nothing
+  <> LandsatQuery "" ["spacecraft_id = " ++ toFilter spacecraft] [] (maxBound :: Int) 0
 
 withLimit :: Int -> LandsatQuery
 withLimit limit =
   defaultLandsatQ
-  <> LandsatQuery "" [] [] (Just limit) Nothing
+  <> LandsatQuery "" [] [] limit 0
 
 withOffset :: Int -> LandsatQuery
 withOffset offset =
   defaultLandsatQ
-  <> LandsatQuery "" [] [] Nothing (Just offset)
+  <> LandsatQuery "" [] [] (maxBound :: Int) offset
 
 makeFilters :: LandsatQuery -> String
 makeFilters (LandsatQuery _ [] _ _ _) = ""
@@ -120,8 +112,8 @@ buildQueryString lq =
   selectF lq
   ++ makeFilters lq
   ++ makeOrderings lq
-  ++ fromMaybe "" ((" LIMIT " ++ ) . show <$> limit lq)
-  ++ fromMaybe "" ((" OFFSET " ++ ) . show <$> offset lq)
+  ++ (" LIMIT " ++ ) (show . limit $ lq)
+  ++ (" OFFSET " ++ ) (show . offset $ lq)
 
 instance ToJSON LandsatQuery where
   toJSON lq =
@@ -136,15 +128,27 @@ projectName :: String
 projectName = "earth-on-gcs"
 
 baseUrl :: String
-baseUrl = "https://clients6.google.com/bigquery/v2/projects/" ++ projectName ++ "/jobs"
+baseUrl = "https://clients6.google.com/bigquery/v2/projects/" ++ projectName
 
--- Key should be some kind of access token from service account auth/auth workflow
+jobsBase :: String
+jobsBase = baseUrl ++ "/jobs"
+
+queriesBase :: String
+queriesBase = baseUrl ++ "/queries"
+
+-- Key should be a bearer token from service account auth/auth workflow
 runQuery :: String -> JobPost -> IO ( Response ByteString )
-runQuery key body = postWith opts baseUrl $ toJSON body
+runQuery key body = postWith opts jobsBase $ toJSON body
   where
     opts = defaults
       & header "Authorization" .~ [pack $ "Bearer " ++ key]
       & param "alt" .~ ["json"]
+
+getQuery :: String -> String -> IO (Response ByteString)
+getQuery key jobId = getWith opts (queriesBase ++ "/" ++ jobId)
+  where
+    opts = defaults
+      & header "Authorization" .~ [pack $ "Bearer " ++ key]
 
 randomInt :: IO Word8
 randomInt = randomIO
@@ -152,12 +156,16 @@ randomInt = randomIO
 randomJobId :: IO String
 randomJobId = (\nums -> concat $ show <$> nums) <$> replicateM 4 randomInt
 
+decodeCreateResponse :: ByteString -> Maybe QueryCreateResponse
+decodeCreateResponse = decode
 
--- TODO: add decoder for bigquery response, see if assuming completion in req/response
--- cycle is reasonable
+decodeGetResponse :: ByteString -> Maybe QueryDetailResponse
+decodeGetResponse = decode
+
 tryIt :: String -> IO ()
 tryIt s = do
   jobId <- randomJobId
   print jobId
-  resp <- runQuery s (makeJobPost (defaultLandsatQ <> withLimit 10) jobId)
-  print $ (resp ^. responseBody)
+  createResp <- runQuery s (makeJobPost (defaultLandsatQ <> withMinCloudCover 0.3 <> withLimit 10) jobId)
+  getResp <- getQuery s jobId
+  print $ decodeGetResponse (getResp ^. responseBody)
