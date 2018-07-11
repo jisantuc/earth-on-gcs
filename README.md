@@ -1,4 +1,5 @@
-# earth-on-gcs-browser
+`earth-on-gcs-browser`
+===
 
-Servant API for querying Landsat and Sentinel-2 data available in
-Google Cloud Storage
+This section contains a library interacting with the index data available in
+Google BigQuery.
