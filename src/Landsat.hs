@@ -3,16 +3,15 @@ module Landsat where
 import           BigQuery
 import           Control.Applicative   ((<|>))
 import           Control.Lens          ((&), (.~), (^.))
-import           Control.Monad         (replicateM)
 import           Data.Aeson            (ToJSON, decode, object, toJSON, (.=))
 import           Data.ByteString.Char8 (pack)
 import           Data.ByteString.Lazy  (ByteString)
 import           Data.List             (concat, intersperse)
-import           Data.Maybe            (fromMaybe)
+import           Data.Maybe            (fromMaybe, isJust)
 import           Data.Semigroup        (Semigroup, (<>))
 import qualified Data.Text             as T
-import           Data.Time.Format      (defaultTimeLocale, FormatTime, formatTime)
-import           Data.Word             (Word8)
+import           Data.Time.Format      (FormatTime, defaultTimeLocale,
+                                        formatTime)
 import           GHC.Generics
 import           LandsatModel
 import           Network.Wreq          (Options, Response, defaults, getWith,
@@ -55,12 +54,12 @@ instance Semigroup LandsatQuery where
 withMinDateAcquired :: FormatTime t => t -> LandsatQuery
 withMinDateAcquired formattable =
   defaultLandsatQ
-  <> LandsatQuery "" ["date_acquired >= " ++ formatTime defaultTimeLocale "%Y-%m-%d" formattable] [] (maxBound :: Int) 0
+  <> LandsatQuery "" ["date_acquired >= '" ++ formatTime defaultTimeLocale "%Y-%m-%d" formattable ++ "'"] [] (maxBound :: Int) 0
 
 withMaxDateAcquired :: FormatTime t => t -> LandsatQuery
 withMaxDateAcquired formattable =
   defaultLandsatQ
-  <> LandsatQuery "" ["date_acquired <= " ++ formatTime defaultTimeLocale "%Y-%m-%d" formattable] [] (maxBound :: Int) 0
+  <> LandsatQuery "" ["date_acquired <= '" ++ formatTime defaultTimeLocale "%Y-%m-%d" formattable ++ "'"] [] (maxBound :: Int) 0
 
 withMinCloudCover :: CloudCover -> LandsatQuery
 withMinCloudCover cc =
@@ -145,27 +144,10 @@ runQuery key body = postWith opts jobsBase $ toJSON body
       & param "alt" .~ ["json"]
 
 getQuery :: String -> String -> IO (Response ByteString)
-getQuery key jobId = getWith opts (queriesBase ++ "/" ++ jobId)
+getQuery key jobId =
+  getWith opts (queriesBase ++ "/" ++ jobId) >>=
+    (\resp -> if (checkResp resp) then (return resp) else (getQuery key jobId))
   where
     opts = defaults
       & header "Authorization" .~ [pack $ "Bearer " ++ key]
-
-randomInt :: IO Word8
-randomInt = randomIO
-
-randomJobId :: IO String
-randomJobId = (\nums -> concat $ show <$> nums) <$> replicateM 4 randomInt
-
-decodeCreateResponse :: ByteString -> Maybe QueryCreateResponse
-decodeCreateResponse = decode
-
-decodeGetResponse :: ByteString -> Maybe QueryDetailResponse
-decodeGetResponse = decode
-
-tryIt :: String -> IO ()
-tryIt s = do
-  jobId <- randomJobId
-  print jobId
-  createResp <- runQuery s (makeJobPost (defaultLandsatQ <> withMinCloudCover 0.3 <> withLimit 10) jobId)
-  getResp <- getQuery s jobId
-  print $ decodeGetResponse (getResp ^. responseBody)
+    checkResp = isJust . decodeGetResponse . (^. responseBody)

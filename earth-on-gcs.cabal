@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 63bf7cac0b141ca4f9081539c50aa3d3433a4d3d9210f7285fc2772d1863fd9f
+-- hash: 81006a4c9305e79894ecb4a6a4aac70c098e0643075918abd6f13f5e6aa814ce
 
 name:           earth-on-gcs
 version:        0.1.0.0
@@ -42,6 +42,7 @@ library
     , lens-aeson >=1.0.2 && <1.1
     , random >=1.1 && <1.2
     , servant >=0.13.0.1 && <0.14
+    , servant-client >=0.13.0.1 && <0.14
     , servant-server >=0.13.0.1 && <0.14
     , text >=1.2.3 && <1.2.4
     , time >=1.8.0.2 && <1.9
@@ -66,6 +67,7 @@ executable earth-on-gcs-exe
     , lens-aeson >=1.0.2 && <1.1
     , random >=1.1 && <1.2
     , servant >=0.13.0.1 && <0.14
+    , servant-client >=0.13.0.1 && <0.14
     , servant-server >=0.13.0.1 && <0.14
     , text >=1.2.3 && <1.2.4
     , time >=1.8.0.2 && <1.9
@@ -91,6 +93,7 @@ test-suite earth-on-gcs-test
     , lens-aeson >=1.0.2 && <1.1
     , random >=1.1 && <1.2
     , servant >=0.13.0.1 && <0.14
+    , servant-client >=0.13.0.1 && <0.14
     , servant-server >=0.13.0.1 && <0.14
     , text >=1.2.3 && <1.2.4
     , time >=1.8.0.2 && <1.9
